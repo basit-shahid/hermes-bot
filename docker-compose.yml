@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  webhook-service:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - WHATSAPP_API_TOKEN=${WHATSAPP_API_TOKEN}
+    volumes:
+      - ./app:/code/app
+    restart: unless-stopped

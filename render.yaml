@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: hermes-webhook
+    env: docker
+    region: oregon 
+    plan: free
+    branch: main
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: WHATSAPP_API_TOKEN
+        sync: false

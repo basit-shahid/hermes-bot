@@ -47,3 +47,22 @@ async def whatsapp_webhook(request: Request):
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
         return {"status": "error", "detail": str(e)}
+
+@app.post("/webhook/discord")
+async def discord_webhook(request: Request):
+    """
+    Endpoint for Discord Interactions Webhook.
+    """
+    try:
+        # Note: Discord requires request signature verification using Ed25519
+        data = await request.json()
+        logger.info(f"Received Discord payload: {json.dumps(data)}")
+        
+        # TODO: Verify cryptographic signature using DISCORD_PUBLIC_KEY
+        # TODO: Handle Discord Ping ('type': 1) required during webhook setup
+        # TODO: Route user messages to AI Engine
+        
+        return {"type": 4, "data": {"content": "Message received by Hermes"}}
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        return {"status": "error", "detail": str(e)}

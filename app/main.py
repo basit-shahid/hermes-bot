@@ -1,6 +1,9 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 import json
 import logging
+import os
+from nacl.signing import VerifyKey
+from nacl.exceptions import BadSignatureError
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)
@@ -53,16 +56,30 @@ async def discord_webhook(request: Request):
     """
     Endpoint for Discord Interactions Webhook.
     """
+    public_key = os.getenv("DISCORD_PUBLIC_KEY")
+    if not public_key:
+        raise HTTPException(status_code=500, detail="Missing DISCORD_PUBLIC_KEY setup")
+        
     try:
-        # Note: Discord requires request signature verification using Ed25519
+        verify_key = VerifyKey(bytes.fromhex(public_key))
+        signature = request.headers.get("X-Signature-Ed25519")
+        timestamp = request.headers.get("X-Signature-Timestamp")
+        
+        body = await request.body()
+        verify_key.verify(f"{timestamp}".encode() + body, bytes.fromhex(signature))
+    except (BadSignatureError, Exception) as e:
+        logger.error(f"Verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid request signature")
+        
+    try:
         data = await request.json()
         logger.info(f"Received Discord payload: {json.dumps(data)}")
         
-        # TODO: Verify cryptographic signature using DISCORD_PUBLIC_KEY
-        # TODO: Handle Discord Ping ('type': 1) required during webhook setup
-        # TODO: Route user messages to AI Engine
-        
-        return {"type": 4, "data": {"content": "Message received by Hermes"}}
+        # Handle Discord Ping required to save the URL
+        if data.get("type") == 1:
+            return {"type": 1}
+            
+        return {"type": 4, "data": {"content": "Message received by Hermes!"}}
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
         return {"status": "error", "detail": str(e)}

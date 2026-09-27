@@ -24,23 +24,23 @@ bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+ROUTEME_API_KEY = os.getenv("ROUTEME_API_KEY")
 
-# Initialize OpenRouter Client
+# Initialize RoutesMe Client
 # We use the AsyncOpenAI client since discord.py is fully async
 ai_client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
+    base_url="https://routesme.online/v1",
+    api_key=ROUTEME_API_KEY,
 )
-# Free openrouter model (Llama 3 8B Instruct or similar)
-AI_MODEL = "google/gemini-2.5-flash-free" # Using google/gemini-2.5-flash-free via OpenRouter
+# Free RoutesMe GLM model
+AI_MODEL = "GLM5.3-flash" 
 
 SYSTEM_PROMPT = "You are Hermes, a helpful, intelligent, and friendly AI assistant for a university student. You help with schedules, goals, and general knowledge. Keep responses concise and use Discord markdown where appropriate."
 
 async def generate_response(user_input: str) -> str:
-    """Helper function to call OpenRouter AI."""
-    if not OPENROUTER_API_KEY:
-        return "⚠️ Hermes AI Engine is not configured yet. (Missing OPENROUTER_API_KEY in Render dashboard)"
+    """Helper function to call RoutesMe AI."""
+    if not ROUTEME_API_KEY:
+        return "⚠️ Hermes AI Engine is not configured yet. (Missing ROUTEME_API_KEY in Render dashboard)"
     
     try:
         completion = await ai_client.chat.completions.create(

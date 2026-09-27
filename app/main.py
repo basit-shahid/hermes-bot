@@ -6,6 +6,7 @@ import threading
 import discord
 from discord import app_commands
 from fastapi import FastAPI
+from openai import AsyncOpenAI
 
 # ──────────────────────────────────────────────
 # Logging
@@ -23,6 +24,37 @@ bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+# Initialize OpenRouter Client
+# We use the AsyncOpenAI client since discord.py is fully async
+ai_client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
+# Free openrouter model (Llama 3 8B Instruct or similar)
+AI_MODEL = "google/gemini-2.5-flash-free" # Using google/gemini-2.5-flash-free via OpenRouter
+
+SYSTEM_PROMPT = "You are Hermes, a helpful, intelligent, and friendly AI assistant for a university student. You help with schedules, goals, and general knowledge. Keep responses concise and use Discord markdown where appropriate."
+
+async def generate_response(user_input: str) -> str:
+    """Helper function to call OpenRouter AI."""
+    if not OPENROUTER_API_KEY:
+        return "⚠️ Hermes AI Engine is not configured yet. (Missing OPENROUTER_API_KEY in Render dashboard)"
+    
+    try:
+        completion = await ai_client.chat.completions.create(
+            model=AI_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_input}
+            ]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        logger.error(f"AI Generation Error: {e}")
+        return "⚠️ Sorry, my AI brain encountered an error answering that."
+
 
 
 @bot.event
@@ -58,14 +90,11 @@ async def on_message(message: discord.Message):
         if not user_text:
             user_text = "hello"
 
-        response = (
-            f"🏛️ **Hermes heard you!**\n\n"
-            f"You said: *{user_text}*\n\n"
-            f"⚙️ AI Engine is not connected yet (Phase 3). "
-            f"But the pipeline is working end-to-end!\n\n"
-            f"💡 Try my slash commands: `/ask`, `/schedule`, `/goal`, `/help`"
-        )
-        await message.reply(response)
+        # Show typing indicator while generating
+        async with message.channel.typing():
+            ai_response = await generate_response(user_text)
+            
+        await message.reply(ai_response)
 
 
 # ──────────────────────────────────────────────
@@ -74,13 +103,12 @@ async def on_message(message: discord.Message):
 @tree.command(name="ask", description="Ask Hermes anything about your schedule, studies, or goals")
 @app_commands.describe(question="Your question for Hermes")
 async def ask_command(interaction: discord.Interaction, question: str):
-    response = (
-        f"🏛️ **Hermes heard you!**\n\n"
-        f"You asked: *{question}*\n\n"
-        f"⚙️ AI Engine is not connected yet (Phase 3). "
-        f"But the pipeline is working end-to-end!"
-    )
-    await interaction.response.send_message(response)
+    # Acknowledge the command immediately to prevent Discord's 3-second timeout
+    await interaction.response.defer(thinking=True)
+    
+    ai_response = await generate_response(question)
+    
+    await interaction.followup.send(f"**You asked:** {question}\n\n{ai_response}")
 
 
 @tree.command(name="schedule", description="View or manage your university schedule")

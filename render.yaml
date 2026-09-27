@@ -6,11 +6,5 @@ services:
     plan: free
     branch: master
     envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: WHATSAPP_API_TOKEN
-        sync: false
       - key: DISCORD_BOT_TOKEN
-        sync: false
-      - key: DISCORD_PUBLIC_KEY
         sync: false

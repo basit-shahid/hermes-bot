@@ -8,5 +8,5 @@ services:
     envVars:
       - key: DISCORD_BOT_TOKEN
         sync: false
-      - key: ROUTEME_API_KEY
-        value: rm-6e189242bd6c0e2d40df473b867928d535b6fbe95afba954
+      - key: OPENROUTER_API_KEY
+        sync: false

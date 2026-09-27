@@ -33,7 +33,7 @@ ai_client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 # Free openrouter model (Llama 3 8B Instruct or similar)
-AI_MODEL = "google/gemini-2.5-flash-free" # Using google/gemini-2.5-flash-free via OpenRouter 
+AI_MODEL = "google/gemini-2.0-flash-exp:free"  # Free Gemini model via OpenRouter
 
 SYSTEM_PROMPT = "You are Hermes, a helpful, intelligent, and friendly AI assistant for a university student. You help with schedules, goals, and general knowledge. Keep responses concise and use Discord markdown where appropriate."
 

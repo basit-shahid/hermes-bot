@@ -31,29 +31,47 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ai_client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
+    default_headers={
+        "HTTP-Referer": "https://render.com",
+        "X-Title": "Hermes Bot"
+    }
 )
-# Free openrouter model (Llama 3 8B Instruct or similar)
-AI_MODEL = "google/gemini-2.0-flash-exp:free"  # Free Gemini model via OpenRouter
+
+# Primary & Fallback Free OpenRouter Models
+AI_MODELS = [
+    "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "openrouter/auto"
+]
 
 SYSTEM_PROMPT = "You are Hermes, a helpful, intelligent, and friendly AI assistant for a university student. You help with schedules, goals, and general knowledge. Keep responses concise and use Discord markdown where appropriate."
 
 async def generate_response(user_input: str) -> str:
-    """Helper function to call OpenRouter AI."""
+    """Helper function to call OpenRouter AI with fallback models."""
     if not OPENROUTER_API_KEY:
         return "⚠️ Hermes AI Engine is not configured yet. (Missing OPENROUTER_API_KEY in Render dashboard)"
     
-    try:
-        completion = await ai_client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_input}
-            ]
-        )
-        return completion.choices[0].message.content
-    except Exception as e:
-        logger.error(f"AI Generation Error: {e}")
-        return "⚠️ Sorry, my AI brain encountered an error answering that."
+    last_error = None
+    for model in AI_MODELS:
+        try:
+            logger.info(f"Attempting AI generation with model: {model}")
+            completion = await ai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_input}
+                ],
+                timeout=15.0
+            )
+            if completion.choices and completion.choices[0].message.content:
+                return completion.choices[0].message.content
+        except Exception as e:
+            logger.warning(f"Model {model} failed: {e}")
+            last_error = e
+
+    logger.error(f"All AI Models Failed. Last Error: {last_error}")
+    return f"⚠️ Sorry, my AI brain encountered an error answering that.\n*Error Detail: {last_error}*"
 
 
 
@@ -85,7 +103,7 @@ async def on_message(message: discord.Message):
         # Strip the mention from the message text
         user_text = message.content
         if is_mentioned:
-            user_text = user_text.replace(f"<@{bot.user.id}>", "").strip()
+            user_text = user_text.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
 
         if not user_text:
             user_text = "hello"

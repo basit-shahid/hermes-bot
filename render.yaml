@@ -5,14 +5,12 @@ services:
     region: oregon
     plan: free
     branch: master
-    disk:
-      name: hermes-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: DISCORD_BOT_TOKEN
         sync: false
       - key: OPENROUTER_API_KEY
+        sync: false
+      - key: DATABASE_URL
         sync: false
       - key: WHATSAPP_ACCESS_TOKEN
         sync: false
@@ -20,5 +18,3 @@ services:
         sync: false
       - key: WHATSAPP_VERIFY_TOKEN
         sync: false
-      - key: HERMES_DB_PATH
-        value: /data/hermes.db

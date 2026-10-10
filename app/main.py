@@ -1,17 +1,33 @@
+"""
+main.py — Hermes Bot: FastAPI application entry point.
+
+Architecture:
+- FastAPI serves two roles:
+  1. Discord bot running as a background gateway task
+  2. WhatsApp Cloud API webhook receiver
+- Persistent memory backed by SQLite (aiosqlite)
+- Agentic tool-calling loop for schedule and memory management
+"""
 import asyncio
 import logging
 import os
-import threading
 
 import discord
 from discord import app_commands
 from fastapi import FastAPI
-from openai import AsyncOpenAI
+
+from app.agent import hermes_agent_process
+from app.db import init_db
+from app.whatsapp import router as whatsapp_router
+from app import memory
 
 # ──────────────────────────────────────────────
 # Logging
 # ──────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
@@ -20,66 +36,15 @@ logger = logging.getLogger(__name__)
 intents = discord.Intents.default()
 intents.message_content = True  # Requires "Message Content Intent" in Developer Portal
 
-bot = discord.Client(intents=intents)
+bot  = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-# Initialize OpenRouter Client
-# We use the AsyncOpenAI client since discord.py is fully async
-ai_client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-    default_headers={
-        "HTTP-Referer": "https://render.com",
-        "X-Title": "Hermes Bot"
-    }
-)
-
-# Primary & Fallback Free OpenRouter Models
-AI_MODELS = [
-    "google/gemini-2.0-flash-lite-preview-02-05:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
-    "openrouter/auto"
-]
-
-SYSTEM_PROMPT = "You are Hermes, a helpful, intelligent, and friendly AI assistant for a university student. You help with schedules, goals, and general knowledge. Keep responses concise and use Discord markdown where appropriate."
-
-async def generate_response(user_input: str) -> str:
-    """Helper function to call OpenRouter AI with fallback models."""
-    if not OPENROUTER_API_KEY:
-        return "⚠️ Hermes AI Engine is not configured yet. (Missing OPENROUTER_API_KEY in Render dashboard)"
-    
-    last_error = None
-    for model in AI_MODELS:
-        try:
-            logger.info(f"Attempting AI generation with model: {model}")
-            completion = await ai_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_input}
-                ],
-                timeout=15.0
-            )
-            if completion.choices and completion.choices[0].message.content:
-                return completion.choices[0].message.content
-        except Exception as e:
-            logger.warning(f"Model {model} failed: {e}")
-            last_error = e
-
-    logger.error(f"All AI Models Failed. Last Error: {last_error}")
-    return f"⚠️ Sorry, my AI brain encountered an error answering that.\n*Error Detail: {last_error}*"
-
 
 
 @bot.event
 async def on_ready():
-    """Called when the bot connects to the Gateway."""
     logger.info(f"✅ Hermes is online as {bot.user} (ID: {bot.user.id})")
-    # Sync slash commands with Discord
     try:
         synced = await tree.sync()
         logger.info(f"✅ Synced {len(synced)} slash commands")
@@ -89,94 +54,163 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    """Respond to regular messages (mentions and DMs)."""
-    # Don't reply to ourselves
+    """Respond to DMs and @mentions with full agent + memory."""
     if message.author == bot.user:
         return
 
-    # Respond to DMs
-    is_dm = isinstance(message.channel, discord.DMChannel)
-    # Respond to mentions
+    is_dm       = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions
 
-    if is_dm or is_mentioned:
-        # Strip the mention from the message text
-        user_text = message.content
-        if is_mentioned:
-            user_text = user_text.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+    if not (is_dm or is_mentioned):
+        return
 
-        if not user_text:
-            user_text = "hello"
+    user_text = message.content
+    if is_mentioned:
+        user_text = (
+            user_text
+            .replace(f"<@{bot.user.id}>", "")
+            .replace(f"<@!{bot.user.id}>", "")
+            .strip()
+        )
 
-        # Show typing indicator while generating
-        async with message.channel.typing():
-            ai_response = await generate_response(user_text)
-            
-        await message.reply(ai_response)
+    if not user_text:
+        user_text = "hello"
+
+    user_id   = f"dc:{message.author.id}"
+    user_name = message.author.display_name
+
+    async with message.channel.typing():
+        reply = await hermes_agent_process(
+            user_id=user_id,
+            user_name=user_name,
+            user_message=user_text,
+        )
+
+    # Discord has a 2000-char message limit — chunk if needed
+    chunks = [reply[i:i+1900] for i in range(0, len(reply), 1900)]
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            await message.reply(chunk)
+        else:
+            await message.channel.send(chunk)
 
 
 # ──────────────────────────────────────────────
 # Slash Commands
 # ──────────────────────────────────────────────
+
 @tree.command(name="ask", description="Ask Hermes anything about your schedule, studies, or goals")
 @app_commands.describe(question="Your question for Hermes")
 async def ask_command(interaction: discord.Interaction, question: str):
-    # Acknowledge the command immediately to prevent Discord's 3-second timeout
     await interaction.response.defer(thinking=True)
-    
-    ai_response = await generate_response(question)
-    
-    await interaction.followup.send(f"**You asked:** {question}\n\n{ai_response}")
-
-
-@tree.command(name="schedule", description="View or manage your university schedule")
-async def schedule_command(interaction: discord.Interaction):
-    response = (
-        "📅 **Schedule Service**\n\n"
-        "This will show your university lectures and deadlines.\n"
-        "🔧 Coming in Phase 2!"
+    user_id = f"dc:{interaction.user.id}"
+    reply   = await hermes_agent_process(
+        user_id=user_id,
+        user_name=interaction.user.display_name,
+        user_message=question,
     )
-    await interaction.response.send_message(response)
+    # Prefix the question for context in the channel
+    full   = f"**You asked:** {question}\n\n{reply}"
+    chunks = [full[i:i+1900] for i in range(0, len(full), 1900)]
+    await interaction.followup.send(chunks[0])
+    for chunk in chunks[1:]:
+        await interaction.followup.send(chunk)
+
+
+@tree.command(name="schedule", description="View your schedule for today")
+async def schedule_command(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    user_id = f"dc:{interaction.user.id}"
+    reply   = await hermes_agent_process(
+        user_id=user_id,
+        user_name=interaction.user.display_name,
+        user_message="Show me my schedule for today.",
+    )
+    await interaction.followup.send(reply)
+
+
+@tree.command(name="add", description="Add an event to your schedule")
+@app_commands.describe(event="Describe the event, e.g. 'AI lab tomorrow 2pm to 4pm'")
+async def add_command(interaction: discord.Interaction, event: str):
+    await interaction.response.defer(thinking=True)
+    user_id = f"dc:{interaction.user.id}"
+    reply   = await hermes_agent_process(
+        user_id=user_id,
+        user_name=interaction.user.display_name,
+        user_message=f"Add this to my schedule: {event}",
+    )
+    await interaction.followup.send(reply)
+
+
+@tree.command(name="memory", description="See what Hermes remembers about you")
+async def memory_command(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    user_id = f"dc:{interaction.user.id}"
+    facts   = await memory.get_all_facts(user_id)
+    if facts:
+        facts_text = "\n".join(f"• {f}" for f in facts)
+        reply = f"🧠 **What I remember about you:**\n{facts_text}"
+    else:
+        reply = "🧠 I haven't saved any facts about you yet. Tell me about your goals, habits, or schedule!"
+    await interaction.followup.send(reply)
+
+
+@tree.command(name="reset", description="Clear Hermes' conversation history (fresh start)")
+async def reset_command(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    user_id = f"dc:{interaction.user.id}"
+    await memory.clear_history(user_id)
+    await interaction.followup.send("🔄 Conversation history cleared! Let's start fresh.")
 
 
 @tree.command(name="goal", description="Check your competitive exam preparation progress")
 async def goal_command(interaction: discord.Interaction):
-    response = (
-        "🎯 **Goal Tracker**\n\n"
-        "This will track your competitive exam preparation progress.\n"
-        "🔧 Coming in Phase 2!"
+    await interaction.response.defer(thinking=True)
+    user_id = f"dc:{interaction.user.id}"
+    reply   = await hermes_agent_process(
+        user_id=user_id,
+        user_name=interaction.user.display_name,
+        user_message="What are my current goals and upcoming exam preparation status?",
     )
-    await interaction.response.send_message(response)
+    await interaction.followup.send(reply)
 
 
 @tree.command(name="help", description="See what Hermes can do for you")
 async def help_command(interaction: discord.Interaction):
     response = (
         "🏛️ **Hermes — Your Personal AI Assistant**\n\n"
-        "Available commands:\n"
-        "• `/ask <question>` — Ask me anything about your studies\n"
-        "• `/schedule` — View your university schedule\n"
-        "• `/goal` — Check your exam preparation progress\n"
+        "**Slash Commands:**\n"
+        "• `/ask <question>` — Ask me anything (studies, advice, plans)\n"
+        "• `/add <event>` — Add a lecture, study block, or task to your schedule\n"
+        "• `/schedule` — View today's full schedule\n"
+        "• `/goal` — Check your exam preparation goals\n"
+        "• `/memory` — See what I remember about you\n"
+        "• `/reset` — Clear conversation history\n"
         "• `/help` — Show this message\n\n"
-        "💬 You can also **mention me** or **DM me** directly!\n\n"
-        "More features coming soon! 🚀"
+        "💬 You can also **mention me** or **DM me** directly in natural language!\n\n"
+        "📱 **WhatsApp:** Contact me on WhatsApp to manage your schedule on the go!\n"
+        "🧠 **Persistent Memory:** I remember your schedule, goals, and habits across sessions."
     )
     await interaction.response.send_message(response)
 
 
 # ──────────────────────────────────────────────
-# FastAPI Health Check (keeps Render happy)
+# FastAPI Application
 # ──────────────────────────────────────────────
-app = FastAPI(title="Hermes Webhook Service")
+app = FastAPI(title="Hermes — Personal AI Assistant", version="3.0.0")
+
+# Mount WhatsApp webhook routes
+app.include_router(whatsapp_router)
 
 
 @app.get("/")
 async def root():
     bot_status = "connected" if bot.is_ready() else "connecting"
     return {
-        "message": "Hermes Webhook Service is running",
+        "message": "Hermes Personal AI Assistant",
         "bot_status": bot_status,
-        "version": "2.0.0-gateway"
+        "version": "3.0.0",
+        "features": ["discord", "whatsapp", "persistent_memory", "schedule_tracking"],
     }
 
 
@@ -186,15 +220,18 @@ async def health():
 
 
 # ──────────────────────────────────────────────
-# Start Discord bot alongside FastAPI
+# Startup / Shutdown
 # ──────────────────────────────────────────────
 @app.on_event("startup")
 async def startup_event():
-    """Start the Discord bot when FastAPI starts."""
+    """Initialize database and start Discord bot."""
+    # Initialize SQLite tables
+    await init_db()
+
+    # Start Discord bot
     if not BOT_TOKEN:
-        logger.error("❌ DISCORD_BOT_TOKEN not set! Bot will not start.")
+        logger.error("❌ DISCORD_BOT_TOKEN not set! Discord bot will not start.")
         return
-    # Run discord bot in the background
     asyncio.create_task(bot.start(BOT_TOKEN))
     logger.info("🚀 Discord bot starting in background...")
 

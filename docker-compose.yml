@@ -1,13 +1,21 @@
 version: '3.8'
 
 services:
-  webhook-service:
+  hermes:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - WHATSAPP_API_TOKEN=${WHATSAPP_API_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      - HERMES_DB_PATH=/data/hermes.db
     volumes:
       - ./app:/code/app
+      - hermes_data:/data
     restart: unless-stopped
+
+volumes:
+  hermes_data:
